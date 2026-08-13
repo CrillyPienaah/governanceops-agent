@@ -1,0 +1,27 @@
+[build-system]
+requires = ["setuptools>=68.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "governanceops-agent"
+version = "0.1.0"
+description = "Runtime governance controls for agentic AI systems — autonomy tiering, policy/confidence gating, HITL checkpoints, scoped tool permissions, a tamper-evident audit log, and a kill switch."
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+# Deliberately zero runtime dependencies beyond the standard library.
+# This is a governance control layer meant to sit *underneath* whatever
+# agent framework (LangChain, custom loop, etc.) a team is already
+# using — it should never be the reason a dependency resolution breaks,
+# and every primitive here (hashing, dataclasses, enums, threading
+# locks) is fully expressible in stdlib.
+dependencies = []
+
+[project.optional-dependencies]
+dev = ["pytest>=8.0", "pytest-cov>=5.0"]
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
