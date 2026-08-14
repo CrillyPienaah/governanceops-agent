@@ -78,16 +78,64 @@ OSFI E-23 framing), 6/6 scenarios passing. Two companion misconfigured
 variants demonstrate a genuinely useful distinction: removing the
 account-closure block rule entirely
 ([`_MISCONFIGURED`](examples/mortgage_underwriting_gate_MISCONFIGURED.json))
-degrades safely to `requires_approval` — the "no rule matched \u2192
+degrades safely to `requires_approval` — the "no rule matched →
 default to requiring a human, never silently allow" design decision
 earning its keep — while a more realistic mistake, an overly-broad
 permissive rule whose prefix accidentally also matches the prohibited
 action
 ([`_SEVERELY_MISCONFIGURED`](examples/mortgage_underwriting_gate_SEVERELY_MISCONFIGURED.json)),
 genuinely allows it through. That second case is the literal
-"Agent Authorization: FAIL \u2014 agent attempted a prohibited tool call"
+"Agent Authorization: FAIL — agent attempted a prohibited tool call"
 scenario from the strategy document, reproduced and caught for real,
 not just described.
+
+## Closed-loop assurance: policy versioning + the evidence return path
+
+Milestone 4. Two additions that together make the Inventory↔Agent
+integration bidirectional, not just Inventory-to-Agent one-way:
+
+**Policy versioning** — every runtime-policy-relevant change to a
+model in Inventory (autonomy_level, permitted/forbidden tools,
+thresholds) gets a `policy_version` (increments) and `policy_hash`
+(SHA-256 over the canonical policy content). `AgentGovernor.from_governanceops()`
+captures both onto the governor instance, and every `policy_decision`
+audit-log entry now includes them — so a signed audit entry can say
+exactly "this action was evaluated against policy version 3, hash
+a1b2c3..." rather than just "some policy was in effect." That
+specificity is what makes an enforcement event actually auditable
+against a *known, reconstructable* policy state, not a vague reference
+to "the policy" as it happens to look today.
+
+**The evidence return path** — `governor.report_event(entry)` POSTs one
+audit-log entry back to the Inventory record the governor was built
+from (`POST /models/{id}/runtime-events` on the Inventory side).
+Deliberately explicit, not automatic: `evaluate_action()` never calls
+this itself, since reporting every single ALLOWED action back would be
+noise, not evidence. The caller decides which entries are worth
+reporting — almost always BLOCK/REQUIRE_APPROVAL decisions, tool
+denials, and kill-switch events:
+
+```python
+governor = AgentGovernor.from_governanceops(
+    ai_system_record_id="...", inventory_base_url="...", secret_key="...", inventory_token="...",
+)
+outcome = governor.evaluate_action("wire_transfer_x", confidence=0.99, autonomy_level=AutonomyLevel.L4_FULL_AUTONOMY, tool_name="wire_transfer")
+if not outcome.allowed:
+    governor.report_event(governor.audit_log.entries[-1])  # send this denial back to Inventory
+```
+
+Raises `RuntimeError` if called on a governor not built via
+`from_governanceops()` — there's no Inventory record to report back to
+otherwise. Only callable with a real Inventory record behind it, by
+design: this method exists specifically to close the loop that
+`from_governanceops()` opened, not as a general-purpose event sink.
+
+**Honest scoping**: this is the return path only — Inventory storing
+and listing reported events (`GET /models/{id}/runtime-events`), not
+yet Inventory *acting* on a pattern of events (the "17 denials in 24
+hours → automatic reassessment required" idea from the strategy
+discussion). That's a real next step, deliberately not built yet;
+storing the evidence has to exist before anything can react to it.
 
 **Scope, stated plainly**: this checks one specific thing — does the
 declared policy/permission configuration produce the outcomes its
@@ -122,7 +170,7 @@ dependency resolution breaks.
 | `kill_switch.py` | Thread-safe emergency halt with an audit trail, requires explicit human clear | EU AI Act Art. 14, OSFI agentic bulletin |
 | `persistence.py` | JSONL file adapter for `AuditLog` — durable, tamper-detectable across process restarts | EU AI Act Art. 12 (retention) |
 | `gate.py` / `cli.py` | AI Deployment Gates — CI/CD check gating deployment on declared scenario outcomes | OSFI agentic bulletin, OWASP Agentic Top 10 |
-| `inventory_client.py` | Consumes GovernanceOps Inventory's runtime policy bundle — a risk officer's Inventory decision becomes a real, enforced `PolicyEngine`/`ToolScope` configuration here | OSFI agentic bulletin |
+| `inventory_client.py` | Consumes GovernanceOps Inventory's runtime policy bundle *and* reports enforcement events back — bidirectional, closing the control loop | OSFI agentic bulletin |
 
 `governor.py`'s `AgentGovernor` wires all six together behind one
 `evaluate_action()` call — the common-case front door. Every module is
@@ -319,12 +367,14 @@ python examples/live_inventory_roundtrip_demo.py \
 pytest -v
 ```
 
-85 test cases across 12 files, covering all six primitives, the
+91 test cases across 12 files, covering all six primitives, the
 `AgentGovernor` integration, the JSONL persistence adapter, the AI
 Deployment Gate (including real subprocess invocations of the actual
 installed CLI, not just in-process function calls), the crosswalk
-mapping, and the GovernanceOps Inventory policy-bundle integration
-(`test_inventory_client.py`). Every one of these was verified by hand in the
+mapping, and the bidirectional GovernanceOps Inventory integration
+(`test_inventory_client.py` — policy-bundle consumption, policy
+versioning capture, and the evidence-return path via a monkeypatched
+`report_runtime_event`). Every one of these was verified by hand in the
 sandbox this library was built in — this is a **zero-runtime-dependency,
 pure-stdlib** library, so unlike Tool 1 (which needed careful
 module-stubbing to work around missing `pydantic`/`fastapi`/etc.),

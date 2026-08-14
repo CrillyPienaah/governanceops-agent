@@ -18,13 +18,14 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any, Optional
 
-from governanceops_agent.audit_log import AuditLog
+from governanceops_agent.audit_log import AuditEntry, AuditLog
 from governanceops_agent.autonomy import AutonomyLevel
 from governanceops_agent.hitl import Checkpoint, CheckpointStore
 from governanceops_agent.inventory_client import (
     InventoryClientError,
     build_governance_from_bundle,
     fetch_policy_bundle,
+    report_runtime_event,
 )
 from governanceops_agent.kill_switch import KillSwitch
 from governanceops_agent.permissions import PermissionDeniedError, ToolPermissionRegistry
@@ -76,6 +77,13 @@ class AgentGovernor:
         self.permissions = ToolPermissionRegistry(audit_log=self.audit_log)
         self.policy_engine = policy_engine or PolicyEngine()
 
+        # Only meaningful for a governor built via from_governanceops()
+        # -- None here means either "not built that way" or "built
+        # from a bundle with no version/hash set." report_event() checks
+        # for _ai_system_record_id specifically to tell those apart.
+        self.policy_version: Optional[int] = None
+        self.policy_hash: Optional[str] = None
+
     @classmethod
     def from_governanceops(
         cls,
@@ -107,11 +115,60 @@ class AgentGovernor:
                 "policy configured (autonomy_level is unset) — nothing to build a governor from."
             )
 
-        engine, tool_scopes, _autonomy_level = build_governance_from_bundle(bundle)
-        governor = cls(secret_key=secret_key, audit_log=audit_log, policy_engine=engine)
-        for scope in tool_scopes:
+        compiled = build_governance_from_bundle(bundle)
+        governor = cls(secret_key=secret_key, audit_log=audit_log, policy_engine=compiled.engine)
+        for scope in compiled.tool_scopes:
             governor.permissions.register(scope)
+
+        # Stashed so report_event() knows where to report back to, and
+        # so every policy_decision audit entry can record exactly which
+        # policy state produced it -- see evaluate_action below.
+        governor.policy_version = compiled.policy_version
+        governor.policy_hash = compiled.policy_hash
+        governor._ai_system_record_id = ai_system_record_id
+        governor._inventory_base_url = inventory_base_url
+        governor._inventory_token = inventory_token
         return governor
+
+    def report_event(self, entry: AuditEntry, token: Optional[str] = None) -> dict:
+        """
+        Reports one audit-log entry back to the GovernanceOps Inventory
+        record this governor was built from — the return path that
+        closes the control loop. Only callable on a governor built via
+        from_governanceops(); raises RuntimeError otherwise, since a
+        governor built by hand (no secret_key-only construction, no
+        Inventory record behind it) has nowhere to report to.
+
+        Deliberately explicit and caller-invoked, not automatic —
+        evaluate_action() never calls this itself. Reporting every
+        single ALLOWED action back to Inventory would be noise, not
+        evidence; the caller decides which entries are worth reporting
+        (almost always: BLOCK/REQUIRE_APPROVAL decisions, tool denials,
+        and kill-switch events, not routine allows).
+        """
+        if not hasattr(self, "_ai_system_record_id"):
+            raise RuntimeError(
+                "report_event() only works on a governor built via AgentGovernor.from_governanceops() "
+                "-- this governor has no Inventory record to report back to."
+            )
+
+        event = {
+            "occurred_at": entry.timestamp,
+            "event_type": entry.event_type,
+            "action": entry.payload.get("action"),
+            "tool_name": entry.payload.get("tool_name"),
+            "decision": entry.payload.get("decision"),
+            "reason": entry.payload.get("reason") or entry.payload.get("denial_reason"),
+            "policy_version": self.policy_version,
+            "policy_hash": self.policy_hash,
+            "raw_payload": entry.payload,
+        }
+        return report_runtime_event(
+            self._inventory_base_url,
+            self._ai_system_record_id,
+            event,
+            token or self._inventory_token,
+        )
 
     def evaluate_action(
         self,
@@ -154,6 +211,8 @@ class AgentGovernor:
                 "decision": decision.decision.value,
                 "matched_rule": decision.matched_rule,
                 "reason": decision.reason,
+                "policy_version": self.policy_version,
+                "policy_hash": self.policy_hash,
             },
         )
 

@@ -30,6 +30,7 @@ from __future__ import annotations
 import json
 import urllib.error
 import urllib.request
+from dataclasses import dataclass
 from typing import Any, Optional
 
 from governanceops_agent.autonomy import AutonomyLevel
@@ -92,7 +93,22 @@ def fetch_policy_bundle(
     return parsed
 
 
-def build_governance_from_bundle(bundle: dict) -> tuple[PolicyEngine, list, AutonomyLevel]:
+@dataclass(frozen=True)
+class CompiledPolicy:
+    """What build_governance_from_bundle produces — named fields rather
+    than a bare tuple specifically so adding policy_version/policy_hash
+    later didn't silently break every existing positional-unpack call
+    site; attribute access instead of `engine, tool_scopes, _ = ...`
+    is meant to stay stable as more fields get added over time."""
+
+    engine: PolicyEngine
+    tool_scopes: list
+    autonomy_level: AutonomyLevel
+    policy_version: Optional[int] = None
+    policy_hash: Optional[str] = None
+
+
+def build_governance_from_bundle(bundle: dict) -> CompiledPolicy:
     """
     Pure mapping — no network I/O, fully unit-testable. Turns a
     RuntimePolicyBundle-shaped dict into a real PolicyEngine (forbidden
@@ -150,4 +166,55 @@ def build_governance_from_bundle(bundle: dict) -> tuple[PolicyEngine, list, Auto
             )
         )
 
-    return engine, tool_scopes, autonomy_level
+    return CompiledPolicy(
+        engine=engine,
+        tool_scopes=tool_scopes,
+        autonomy_level=autonomy_level,
+        policy_version=bundle.get("policy_version"),
+        policy_hash=bundle.get("policy_hash"),
+    )
+
+
+def report_runtime_event(
+    inventory_base_url: str,
+    ai_system_record_id: str,
+    event: dict,
+    token: Optional[str] = None,
+) -> dict:
+    """
+    POST {inventory_base_url}/models/{ai_system_record_id}/runtime-events
+    — the return path. Reports one enforcement event (a denial, a HITL
+    escalation, a confidence-gate failure, a kill-switch event) back to
+    Inventory, so it becomes visible into what an AI system actually
+    did, not just what it was approved to do.
+
+    `event` must match Inventory's RuntimeEventCreate shape: occurred_at
+    (ISO datetime string), event_type, and optionally action, tool_name,
+    decision, reason, policy_version, policy_hash, raw_payload. See
+    AgentGovernor.report_event() for the usual way to call this — it
+    builds this dict from a real AuditEntry rather than requiring the
+    caller to assemble it by hand.
+
+    Deliberately synchronous and explicit, not something evaluate_action
+    calls automatically — reporting is a decision the caller makes
+    about which events matter enough to send (probably not every single
+    ALLOWED action), not a side effect forced into the hot path of
+    every governance decision.
+    """
+    url = f"{inventory_base_url.rstrip('/')}/models/{ai_system_record_id}/runtime-events"
+    body = json.dumps(event).encode("utf-8")
+    request = urllib.request.Request(url, data=body, method="POST")
+    request.add_header("Content-Type", "application/json")
+    if token:
+        request.add_header("Authorization", f"Bearer {token}")
+
+    try:
+        with urllib.request.urlopen(request, timeout=15) as response:
+            raw_body = response.read().decode("utf-8")
+    except urllib.error.URLError as exc:
+        raise InventoryClientError(f"Could not report runtime event to {url}: {exc}") from exc
+
+    try:
+        return json.loads(raw_body)
+    except json.JSONDecodeError as exc:
+        raise InventoryClientError(f"Response from {url} was not valid JSON: {exc}") from exc

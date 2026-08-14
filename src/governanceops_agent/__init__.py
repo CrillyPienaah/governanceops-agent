@@ -43,7 +43,7 @@ from governanceops_agent.audit_log import AuditEntry, AuditLog, VerificationResu
 from governanceops_agent.autonomy import AutonomyLevel, AutonomyProfile, at_least, profile_for
 from governanceops_agent.governor import ActionOutcome, AgentGovernor
 from governanceops_agent.hitl import Checkpoint, CheckpointError, CheckpointStatus, CheckpointStore
-from governanceops_agent.inventory_client import InventoryClientError, build_governance_from_bundle, fetch_policy_bundle
+from governanceops_agent.inventory_client import InventoryClientError, build_governance_from_bundle, fetch_policy_bundle, report_runtime_event, CompiledPolicy
 from governanceops_agent.kill_switch import KillSwitch, KillSwitchEngagedError, KillSwitchState
 from governanceops_agent.permissions import PermissionDeniedError, ToolPermissionRegistry, ToolScope
 from governanceops_agent.policy import (
@@ -97,6 +97,8 @@ __all__ = [
     "InventoryClientError",
     "build_governance_from_bundle",
     "fetch_policy_bundle",
+    "report_runtime_event",
+    "CompiledPolicy",
 ]
 
 __version__ = "0.1.0"
