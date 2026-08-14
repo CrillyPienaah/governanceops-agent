@@ -15,6 +15,25 @@ An agent that graduates from a scored/passive model into something
 that acts autonomously carries its `AutonomyLevel` rating across both
 tools — same 5-level scale, same names, same meaning.
 
+## Positioning: part of an AI Assurance Control Plane
+
+This library is the **runtime enforcement** layer of a broader thesis:
+governance says what should happen; assurance proves it did, automatically,
+with evidence. See
+[`AI_Assurance_Control_Plane_Strategy.docx`](../AI_Assurance_Control_Plane_Strategy.docx)
+for the full positioning.
+
+The most concrete near-term product idea building on this library: **AI
+Deployment Gates** — a CI/CD-style check that runs `AgentGovernor`'s
+policy and permission checks against a defined AI system and blocks
+deployment on failure, the same mental model as a test suite gating a
+merge. The gate logic (`PolicyEngine`), the "prohibited tool call" check
+(`ToolPermissionRegistry`), and the evidence trail (`AuditLog`) already
+exist in this repo; what's missing is a CLI/GitHub Action wrapper that
+packages them into a single pass/fail score — see `examples/` for the
+closest existing analog (a full policy → checkpoint → tool-permission →
+audit-trail run, just not yet wired into CI).
+
 ## Install
 
 ```bash
