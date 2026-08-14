@@ -1,0 +1,106 @@
+{
+  "ai_system_id": "AI-CA-SB-002183",
+  "ai_system_name": "Mortgage Underwriting Agent v4.3",
+  "policy_rules": [
+    {
+      "type": "block",
+      "name": "no_account_closure",
+      "action_prefix": "customer_account_close",
+      "reason": "Account closure is never a permitted action for this AI system \u2014 outside its mandate entirely, regardless of confidence or autonomy tier."
+    },
+    {
+      "type": "threshold",
+      "name": "credit_check",
+      "min_confidence": 0.90,
+      "minimum_autonomy": "L3_BOUNDED_AUTONOMY",
+      "action_prefix": "credit_check"
+    },
+    {
+      "type": "threshold",
+      "name": "calculate_risk",
+      "min_confidence": 0.85,
+      "minimum_autonomy": "L3_BOUNDED_AUTONOMY",
+      "action_prefix": "calculate_risk"
+    },
+    {
+      "type": "threshold",
+      "name": "approve_application",
+      "min_confidence": 0.95,
+      "minimum_autonomy": "L3_BOUNDED_AUTONOMY",
+      "action_prefix": "approve_application"
+    }
+  ],
+  "tool_scopes": [
+    {
+      "tool_name": "CreditCheck",
+      "minimum_autonomy": "L3_BOUNDED_AUTONOMY"
+    },
+    {
+      "tool_name": "RetrieveIncome",
+      "minimum_autonomy": "L3_BOUNDED_AUTONOMY"
+    },
+    {
+      "tool_name": "CalculateRisk",
+      "minimum_autonomy": "L3_BOUNDED_AUTONOMY"
+    },
+    {
+      "tool_name": "ApproveApplication",
+      "minimum_autonomy": "L3_BOUNDED_AUTONOMY",
+      "constraint": {"kind": "max_param", "param": "loan_amount", "max": 750000}
+    }
+  ],
+  "scenarios": [
+    {
+      "name": "CreditCheck: confident, in-mandate call is allowed",
+      "action": "credit_check_applicant",
+      "confidence": 0.96,
+      "autonomy_level": "L3_BOUNDED_AUTONOMY",
+      "tool_name": "CreditCheck",
+      "tool_params": {"applicant_id": "APP-88213"},
+      "expect": "allowed"
+    },
+    {
+      "name": "CalculateRisk: confident, in-mandate call is allowed",
+      "action": "calculate_risk_applicant",
+      "confidence": 0.94,
+      "autonomy_level": "L3_BOUNDED_AUTONOMY",
+      "tool_name": "CalculateRisk",
+      "tool_params": {"applicant_id": "APP-88213"},
+      "expect": "allowed"
+    },
+    {
+      "name": "ApproveApplication: confident, within the loan-amount cap is allowed",
+      "action": "approve_application_x",
+      "confidence": 0.97,
+      "autonomy_level": "L3_BOUNDED_AUTONOMY",
+      "tool_name": "ApproveApplication",
+      "tool_params": {"applicant_id": "APP-88213", "loan_amount": 480000},
+      "expect": "allowed"
+    },
+    {
+      "name": "ApproveApplication: uncertain risk score requires a human underwriter",
+      "action": "approve_application_y",
+      "confidence": 0.6,
+      "autonomy_level": "L3_BOUNDED_AUTONOMY",
+      "tool_name": "ApproveApplication",
+      "tool_params": {"applicant_id": "APP-99110", "loan_amount": 480000},
+      "expect": "requires_approval"
+    },
+    {
+      "name": "ApproveApplication: confident, but loan amount exceeds the cap \u2014 still blocked by tool scope",
+      "action": "approve_application_z",
+      "confidence": 0.99,
+      "autonomy_level": "L3_BOUNDED_AUTONOMY",
+      "tool_name": "ApproveApplication",
+      "tool_params": {"applicant_id": "APP-77401", "loan_amount": 2100000},
+      "expect": "blocked"
+    },
+    {
+      "name": "Agent Authorization: prohibited tool call is blocked",
+      "action": "customer_account_close_urgent",
+      "confidence": 0.99,
+      "autonomy_level": "L4_FULL_AUTONOMY",
+      "expect": "blocked"
+    }
+  ]
+}

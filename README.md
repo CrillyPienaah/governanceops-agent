@@ -70,6 +70,25 @@ reading to see what a caught gap actually looks like), and
 [`.github/workflows/example-deployment-gate.yml`](.github/workflows/example-deployment-gate.yml)
 for how another repo would wire this into CI.
 
+A second, richer example —
+[`examples/mortgage_underwriting_gate.json`](examples/mortgage_underwriting_gate.json)
+— reproduces the exact "Mortgage Underwriting Agent v4.3" AI system
+from the accompanying strategy document (same ID, same four tools, same
+OSFI E-23 framing), 6/6 scenarios passing. Two companion misconfigured
+variants demonstrate a genuinely useful distinction: removing the
+account-closure block rule entirely
+([`_MISCONFIGURED`](examples/mortgage_underwriting_gate_MISCONFIGURED.json))
+degrades safely to `requires_approval` — the "no rule matched \u2192
+default to requiring a human, never silently allow" design decision
+earning its keep — while a more realistic mistake, an overly-broad
+permissive rule whose prefix accidentally also matches the prohibited
+action
+([`_SEVERELY_MISCONFIGURED`](examples/mortgage_underwriting_gate_SEVERELY_MISCONFIGURED.json)),
+genuinely allows it through. That second case is the literal
+"Agent Authorization: FAIL \u2014 agent attempted a prohibited tool call"
+scenario from the strategy document, reproduced and caught for real,
+not just described.
+
 **Scope, stated plainly**: this checks one specific thing — does the
 declared policy/permission configuration produce the outcomes its
 owner expects, for the scenarios they thought to write down. It does
