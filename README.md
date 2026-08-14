@@ -248,14 +248,32 @@ configured in Inventory (`autonomy_level` unset — true for most models
 in a typical inventory, which are scored/passive, not agentic) or if
 Inventory can't be reached. Uses `urllib` (stdlib) for the fetch, not
 `requests`/`httpx` — consistent with this library's zero-dependency
-design. **Honest limitation**: `fetch_policy_bundle` (the network call)
-was written carefully against Inventory's documented response shape but
-developed in a sandbox with no network egress to test against a live
-instance — the pure mapping logic (`build_governance_from_bundle`) has
-no such limitation and is fully tested (see
-`tests/test_inventory_client.py`), but the fetch itself should be
-verified against a real running Inventory before being trusted in
-production.
+design.
+
+**Live-verified, not just unit-tested**: `fetch_policy_bundle` was
+originally written against Inventory's documented response shape in a
+sandbox with no network egress, so only the pure mapping logic could
+be tested at the time. It has since been verified against a real,
+separately-deployed Inventory instance —
+[`examples/live_inventory_roundtrip_demo.py`](examples/live_inventory_roundtrip_demo.py)
+is the actual script used for that verification, not an illustrative
+mockup. The real run: created a test model in a live Inventory
+deployment with `forbidden_tools: ["wire_transfer"]`, confirmed the
+action was blocked (with a real audit trail), then PATCHed Inventory's
+`forbidden_tools`/`permitted_tools` and re-ran the *same unmodified
+script* — the action was now allowed, entirely from the policy change,
+with zero code touched on the agent side. That's the concrete proof
+behind "Inventory becomes the source of truth for runtime policy": a
+governance decision changing an agent's actual behavior over a real
+network call, not a shared naming convention between two codebases.
+
+```bash
+python examples/live_inventory_roundtrip_demo.py \
+    --inventory-url https://your-inventory-instance.example.com/api/v1 \
+    --record-id <the model's record_id in Inventory> \
+    --token <a valid bearer token> \
+    --tool-name wire_transfer
+```
 
 ## Design decisions worth knowing about
 
