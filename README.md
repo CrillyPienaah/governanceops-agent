@@ -23,16 +23,62 @@ with evidence. See
 [`AI_Assurance_Control_Plane_Strategy.docx`](../AI_Assurance_Control_Plane_Strategy.docx)
 for the full positioning.
 
-The most concrete near-term product idea building on this library: **AI
-Deployment Gates** — a CI/CD-style check that runs `AgentGovernor`'s
-policy and permission checks against a defined AI system and blocks
-deployment on failure, the same mental model as a test suite gating a
-merge. The gate logic (`PolicyEngine`), the "prohibited tool call" check
-(`ToolPermissionRegistry`), and the evidence trail (`AuditLog`) already
-exist in this repo; what's missing is a CLI/GitHub Action wrapper that
-packages them into a single pass/fail score — see `examples/` for the
-closest existing analog (a full policy → checkpoint → tool-permission →
-audit-trail run, just not yet wired into CI).
+**AI Deployment Gates** — a CI/CD-style check that runs an AI system's
+governance configuration (policy rules + tool scopes) against a set of
+declared scenarios and blocks deployment if any scenario's actual
+outcome doesn't match what its owner expected. Same mental model as a
+test suite gating a merge, applied to governance configuration instead
+of application code — a scenario declaring `expect: blocked` for a
+prohibited tool call is a real regression test: if that tool call
+actually goes through, the gate catches the gap before it reaches
+production, not after.
+
+```bash
+pip install governanceops-agent
+governanceops-gate run ai_system.json
+```
+
+```json
+{
+  "ai_system_id": "AI-CA-EX-000001",
+  "ai_system_name": "Invoice Reconciliation Agent v1.4.0",
+  "policy_rules": [
+    {"type": "threshold", "name": "invoice_match", "min_confidence": 0.90,
+     "minimum_autonomy": "L3_BOUNDED_AUTONOMY", "action_prefix": "approve_invoice_match"}
+  ],
+  "tool_scopes": [
+    {"tool_name": "auto_approve_invoice", "minimum_autonomy": "L3_BOUNDED_AUTONOMY",
+     "constraint": {"kind": "max_param", "param": "amount", "max": 5000}}
+  ],
+  "scenarios": [
+    {"name": "Confident match under the cap is allowed", "action": "approve_invoice_match",
+     "confidence": 0.97, "autonomy_level": "L3_BOUNDED_AUTONOMY", "tool_name": "auto_approve_invoice",
+     "tool_params": {"amount": 3200}, "expect": "allowed"}
+  ]
+}
+```
+
+Exit code is the actual CI contract: `0` = every scenario passed
+(deployment approved), `1` = at least one scenario failed (a real
+governance gap — deployment blocked), `2` = the config itself is
+malformed (a different failure mode a pipeline should treat
+differently, e.g. failing the build with a clearer message rather than
+reporting a false "governance gap"). See
+[`examples/invoice_agent_gate_config.json`](examples/invoice_agent_gate_config.json)
+for a complete example (including a deliberately-broken variant worth
+reading to see what a caught gap actually looks like), and
+[`.github/workflows/example-deployment-gate.yml`](.github/workflows/example-deployment-gate.yml)
+for how another repo would wire this into CI.
+
+**Scope, stated plainly**: this checks one specific thing — does the
+declared policy/permission configuration produce the outcomes its
+owner expects, for the scenarios they thought to write down. It does
+not run unit tests, security scanners, or anything else a normal CI
+pipeline already does; those checks belong alongside this one, not
+inside it. Config format is plain JSON (not YAML) and constraints are a
+small fixed set of declarative kinds (`max_param`/`min_param`/`equals_param`),
+deliberately not `eval()` of an arbitrary expression from a file an
+attacker could modify — see `gate.py`'s docstring for why.
 
 ## Install
 
@@ -56,6 +102,7 @@ dependency resolution breaks.
 | `permissions.py` | Deny-by-default scoped tool permissions with per-call constraints | OWASP Agentic Top 10 (excessive agency), OSFI agentic bulletin |
 | `kill_switch.py` | Thread-safe emergency halt with an audit trail, requires explicit human clear | EU AI Act Art. 14, OSFI agentic bulletin |
 | `persistence.py` | JSONL file adapter for `AuditLog` — durable, tamper-detectable across process restarts | EU AI Act Art. 12 (retention) |
+| `gate.py` / `cli.py` | AI Deployment Gates — CI/CD check gating deployment on declared scenario outcomes | OSFI agentic bulletin, OWASP Agentic Top 10 |
 
 `governor.py`'s `AgentGovernor` wires all six together behind one
 `evaluate_action()` call — the common-case front door. Every module is
@@ -202,9 +249,11 @@ governor = AgentGovernor(audit_log=audit_log, policy_engine=engine)
 pytest -v
 ```
 
-58 test cases across 9 files, covering all six primitives, the
-`AgentGovernor` integration, the JSONL persistence adapter, and the
-crosswalk mapping. Every one of these was verified by hand in the
+75 test cases across 11 files, covering all six primitives, the
+`AgentGovernor` integration, the JSONL persistence adapter, the AI
+Deployment Gate (including real subprocess invocations of the actual
+installed CLI, not just in-process function calls), and the crosswalk
+mapping. Every one of these was verified by hand in the
 sandbox this library was built in — this is a **zero-runtime-dependency,
 pure-stdlib** library, so unlike Tool 1 (which needed careful
 module-stubbing to work around missing `pydantic`/`fastapi`/etc.),

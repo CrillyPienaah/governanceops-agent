@@ -20,6 +20,9 @@ dependencies = []
 [project.optional-dependencies]
 dev = ["pytest>=8.0", "pytest-cov>=5.0"]
 
+[project.scripts]
+governanceops-gate = "governanceops_agent.cli:main"
+
 [tool.setuptools.packages.find]
 where = ["src"]
 

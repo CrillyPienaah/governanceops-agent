@@ -112,6 +112,18 @@ CROSSWALK: list[CrosswalkEntry] = [
         citation="EU AI Act, Article 12",
         note="Article 12 requires logs be kept for a defined retention period — an in-memory-only AuditLog can't satisfy that across a process restart; this is the concrete durability mechanism.",
     ),
+    CrosswalkEntry(
+        component="gate.run_gate",
+        framework="osfi_agentic_bulletin",
+        citation="OSFI, Agentic AI Supervisory Bulletin (July 2026)",
+        note="Assurance evidence generated and enforced automatically at deployment time, not a dashboard reviewed after the fact — the CI/CD gate is the concrete mechanism for 'prove it before it acts.'",
+    ),
+    CrosswalkEntry(
+        component="gate.run_gate",
+        framework="owasp_agentic_top_10",
+        citation="OWASP Agentic AI Top 10 — excessive agency",
+        note="A scenario like 'a prohibited tool call is blocked' is exactly a regression test for excessive-agency gaps, run automatically before every deployment rather than discovered in production.",
+    ),
 ]
 
 

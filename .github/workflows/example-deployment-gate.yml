@@ -1,0 +1,33 @@
+# Example — not a workflow this repo itself needs to run (this repo has
+# no AI system of its own to gate), but the reference other repos would
+# copy to gate THEIR OWN AI system's deployment on a real assurance
+# check, not just unit tests.
+#
+# Sits ALONGSIDE a normal test/security job, not in place of one — see
+# gate.py's module docstring for why conflating the two would overclaim
+# what this check actually covers.
+name: Example - AI Deployment Gate
+
+on:
+  pull_request:
+    paths:
+      - "ai_system.json"   # trigger only when the governance config itself changes
+
+jobs:
+  ai-assurance-gate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install governanceops-agent
+        run: pip install governanceops-agent
+
+      - name: Run AI Deployment Gate
+        run: governanceops-gate run ai_system.json
+        # Non-zero exit (1 = a scenario failed, 2 = the config itself is
+        # invalid) fails this job, which blocks the PR from merging —
+        # that's the actual enforcement mechanism, not the printed report.

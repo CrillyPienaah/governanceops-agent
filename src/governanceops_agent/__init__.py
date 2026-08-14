@@ -40,6 +40,7 @@ from governanceops_agent.policy import (
 )
 from governanceops_agent.crosswalk import CrosswalkEntry, crosswalk_for_component, crosswalk_for_framework
 from governanceops_agent.persistence import PersistentAuditLog, load_persistent_audit_log
+from governanceops_agent.gate import GateConfigError, GateReport, ScenarioResult, load_gate_config, run_gate
 
 __all__ = [
     "AuditEntry",
@@ -72,6 +73,11 @@ __all__ = [
     "crosswalk_for_framework",
     "PersistentAuditLog",
     "load_persistent_audit_log",
+    "GateConfigError",
+    "GateReport",
+    "ScenarioResult",
+    "load_gate_config",
+    "run_gate",
 ]
 
 __version__ = "0.1.0"
