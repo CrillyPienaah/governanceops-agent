@@ -122,6 +122,7 @@ dependency resolution breaks.
 | `kill_switch.py` | Thread-safe emergency halt with an audit trail, requires explicit human clear | EU AI Act Art. 14, OSFI agentic bulletin |
 | `persistence.py` | JSONL file adapter for `AuditLog` — durable, tamper-detectable across process restarts | EU AI Act Art. 12 (retention) |
 | `gate.py` / `cli.py` | AI Deployment Gates — CI/CD check gating deployment on declared scenario outcomes | OSFI agentic bulletin, OWASP Agentic Top 10 |
+| `inventory_client.py` | Consumes GovernanceOps Inventory's runtime policy bundle — a risk officer's Inventory decision becomes a real, enforced `PolicyEngine`/`ToolScope` configuration here | OSFI agentic bulletin |
 
 `governor.py`'s `AgentGovernor` wires all six together behind one
 `evaluate_action()` call — the common-case front door. Every module is
@@ -224,6 +225,38 @@ audit_log.verify()  # confirms nothing in the file was tampered with while this 
 governor = AgentGovernor(audit_log=audit_log, policy_engine=engine)
 ```
 
+Building a governor from a GovernanceOps Inventory record (Tool 1) —
+the concrete mechanism behind "Inventory becomes the source of truth
+for runtime policy":
+
+```python
+governor = AgentGovernor.from_governanceops(
+    ai_system_record_id="<the model's record_id in Inventory>",
+    inventory_base_url="https://your-inventory-instance.example.com/api/v1",
+    secret_key="a-real-secret",
+    inventory_token="...",  # Inventory requires auth on every route
+)
+# governor's PolicyEngine (forbidden tools -> block rules, permitted
+# tools -> confidence-threshold rules) and ToolPermissionRegistry
+# (transaction_limit -> a max_param constraint) are now built directly
+# from that model's Inventory record — a risk officer's decision,
+# enforced here at runtime, not just recorded there.
+```
+
+Raises `InventoryClientError` if the model has no runtime policy
+configured in Inventory (`autonomy_level` unset — true for most models
+in a typical inventory, which are scored/passive, not agentic) or if
+Inventory can't be reached. Uses `urllib` (stdlib) for the fetch, not
+`requests`/`httpx` — consistent with this library's zero-dependency
+design. **Honest limitation**: `fetch_policy_bundle` (the network call)
+was written carefully against Inventory's documented response shape but
+developed in a sandbox with no network egress to test against a live
+instance — the pure mapping logic (`build_governance_from_bundle`) has
+no such limitation and is fully tested (see
+`tests/test_inventory_client.py`), but the fetch itself should be
+verified against a real running Inventory before being trusted in
+production.
+
 ## Design decisions worth knowing about
 
 - **First-match rule ordering in `PolicyEngine`, not most-restrictive-wins.**
@@ -268,11 +301,12 @@ governor = AgentGovernor(audit_log=audit_log, policy_engine=engine)
 pytest -v
 ```
 
-75 test cases across 11 files, covering all six primitives, the
+85 test cases across 12 files, covering all six primitives, the
 `AgentGovernor` integration, the JSONL persistence adapter, the AI
 Deployment Gate (including real subprocess invocations of the actual
-installed CLI, not just in-process function calls), and the crosswalk
-mapping. Every one of these was verified by hand in the
+installed CLI, not just in-process function calls), the crosswalk
+mapping, and the GovernanceOps Inventory policy-bundle integration
+(`test_inventory_client.py`). Every one of these was verified by hand in the
 sandbox this library was built in — this is a **zero-runtime-dependency,
 pure-stdlib** library, so unlike Tool 1 (which needed careful
 module-stubbing to work around missing `pydantic`/`fastapi`/etc.),

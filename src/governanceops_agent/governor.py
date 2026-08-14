@@ -21,6 +21,11 @@ from typing import Any, Optional
 from governanceops_agent.audit_log import AuditLog
 from governanceops_agent.autonomy import AutonomyLevel
 from governanceops_agent.hitl import Checkpoint, CheckpointStore
+from governanceops_agent.inventory_client import (
+    InventoryClientError,
+    build_governance_from_bundle,
+    fetch_policy_bundle,
+)
 from governanceops_agent.kill_switch import KillSwitch
 from governanceops_agent.permissions import PermissionDeniedError, ToolPermissionRegistry
 from governanceops_agent.policy import Decision, PolicyDecisionResult, PolicyEngine
@@ -70,6 +75,43 @@ class AgentGovernor:
         self.checkpoints = CheckpointStore(audit_log=self.audit_log)
         self.permissions = ToolPermissionRegistry(audit_log=self.audit_log)
         self.policy_engine = policy_engine or PolicyEngine()
+
+    @classmethod
+    def from_governanceops(
+        cls,
+        ai_system_record_id: str,
+        inventory_base_url: str,
+        secret_key: Optional[str] = None,
+        audit_log: Optional[AuditLog] = None,
+        inventory_token: Optional[str] = None,
+    ) -> "AgentGovernor":
+        """
+        Builds an AgentGovernor from a GovernanceOps Inventory record —
+        the concrete mechanism behind "Inventory becomes the source of
+        truth for runtime policy": a risk officer's approved autonomy
+        tier, permitted/forbidden tools, and confidence/transaction
+        thresholds (set in Tool 1) become a real, machine-enforced
+        PolicyEngine + ToolScope configuration here, via one HTTP call.
+
+        Raises InventoryClientError if the model has no
+        runtime policy configured (autonomy_level unset in Inventory) or if
+        Inventory can't be reached — there's no sensible governor to
+        construct from a bundle that doesn't exist, so this fails loudly
+        rather than silently falling back to an empty, permissive
+        PolicyEngine.
+        """
+        bundle = fetch_policy_bundle(inventory_base_url, ai_system_record_id, inventory_token)
+        if bundle is None:
+            raise InventoryClientError(
+                f"GovernanceOps Inventory record {ai_system_record_id!r} has no runtime "
+                "policy configured (autonomy_level is unset) — nothing to build a governor from."
+            )
+
+        engine, tool_scopes, _autonomy_level = build_governance_from_bundle(bundle)
+        governor = cls(secret_key=secret_key, audit_log=audit_log, policy_engine=engine)
+        for scope in tool_scopes:
+            governor.permissions.register(scope)
+        return governor
 
     def evaluate_action(
         self,

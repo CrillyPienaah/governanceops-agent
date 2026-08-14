@@ -124,6 +124,12 @@ CROSSWALK: list[CrosswalkEntry] = [
         citation="OWASP Agentic AI Top 10 — excessive agency",
         note="A scenario like 'a prohibited tool call is blocked' is exactly a regression test for excessive-agency gaps, run automatically before every deployment rather than discovered in production.",
     ),
+    CrosswalkEntry(
+        component="inventory_client.build_governance_from_bundle",
+        framework="osfi_agentic_bulletin",
+        citation="OSFI, Agentic AI Supervisory Bulletin (July 2026)",
+        note="Risk classification and autonomy tiering are only meaningful if they actually constrain what the deployed system does — this is the mechanism that turns a risk officer's Inventory-recorded decision into an enforced runtime boundary, not just a record of intent.",
+    ),
 ]
 
 
