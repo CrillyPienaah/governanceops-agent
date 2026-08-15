@@ -120,15 +120,39 @@ def test_unknown_autonomy_level_string_raises_clear_error():
         build_governance_from_bundle(_mortgage_bundle(autonomy_level="l99_made_up"))
 
 
-def test_minimal_bundle_with_no_tools_keys_still_works():
+def test_minimal_bundle_with_explicitly_empty_tools_lists_still_works():
+    """The genuinely valid minimal case: permitted_tools/forbidden_tools
+    PRESENT but empty is a real, legitimate bundle shape (an approved
+    AI system with no tool access at all yet). This is different from
+    the keys being ABSENT entirely, which now raises -- see the test
+    below."""
     minimal = {
         "ai_system_id": "x", "ai_system_name": "y", "risk_rating": "low",
         "autonomy_level": "l2_human_on_loop",
+        "permitted_tools": [], "forbidden_tools": [],
     }
     compiled = _build(minimal)
     assert compiled.tool_scopes == []
     assert compiled.autonomy_level == AutonomyLevel.L2_HUMAN_ON_LOOP
     assert compiled.policy_version is None
+
+
+def test_bundle_missing_tools_keys_entirely_raises_instead_of_silently_defaulting():
+    """Real bug found via a Claude Code review pass: permitted_tools/
+    forbidden_tools being ABSENT from the bundle (as opposed to
+    present-and-empty) used to silently compile a governor with zero
+    rules and zero scopes via a permissive .get(key, []) default --
+    indistinguishable from "this AI system is approved for nothing,"
+    a very different and much louder thing to actually mean. A missing
+    key now means Inventory's response shape doesn't match what this
+    library expects, and that should be a loud error, not a silent
+    empty policy."""
+    incomplete = {
+        "ai_system_id": "x", "ai_system_name": "y", "risk_rating": "low",
+        "autonomy_level": "l2_human_on_loop",
+    }
+    with pytest.raises(InventoryClientError, match="permitted_tools"):
+        build_governance_from_bundle(incomplete)
 
 
 def test_rule_ordering_blocks_forbidden_tool_even_if_it_would_otherwise_match_a_permitted_rule():

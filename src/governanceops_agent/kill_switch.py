@@ -1,5 +1,5 @@
 """
-Kill switch — an emergency halt that, once engaged, makes every further
+Kill switch -- an emergency halt that, once engaged, makes every further
 governed action refuse rather than proceed, until explicitly cleared by
 a human. Maps to EU AI Act Article 14's human oversight requirement
 (the ability to "decide not to use... or otherwise disregard, override
@@ -7,7 +7,7 @@ or reverse the output") and to OSFI's agentic bulletin's expectation
 that agentic systems have a real stop mechanism, not just monitoring
 that a human could theoretically act on eventually.
 
-Deliberately the simplest module in this library — a kill switch that
+Deliberately the simplest module in this library -- a kill switch that
 itself has a complicated failure mode defeats its own purpose. It's a
 thread-safe boolean flag with an audit trail and a "why" attached to
 every engage/clear, nothing cleverer than that.
@@ -25,7 +25,7 @@ from governanceops_agent.audit_log import AuditLog
 
 class KillSwitchEngagedError(Exception):
     """Raised by anything that checks the kill switch and finds it
-    engaged — callers should let this propagate rather than catching
+    engaged -- callers should let this propagate rather than catching
     and continuing; catching it and proceeding anyway would defeat the
     entire point of having a kill switch."""
 
@@ -48,20 +48,26 @@ class KillSwitch:
         self._audit_log = audit_log
 
     def engage(self, engaged_by: str, reason: str) -> None:
+        # The audit call sits inside the same lock as the state change
+        # -- both used to happen sequentially but with the lock
+        # released before the audit call, so a thread reading .state in
+        # between could observe "engaged" with no matching audit entry
+        # yet. AuditLog has its own separate lock, so nesting the call
+        # here doesn't risk a deadlock (nothing in AuditLog ever tries
+        # to acquire KillSwitch's lock).
         with self._lock:
             self._is_engaged = True
             self._engaged_by = engaged_by
             self._engaged_at = datetime.now(timezone.utc)
             self._reason = reason
-
-        if self._audit_log:
-            self._audit_log.append(
-                "kill_switch_engaged", {"engaged_by": engaged_by, "reason": reason}
-            )
+            if self._audit_log:
+                self._audit_log.append(
+                    "kill_switch_engaged", {"engaged_by": engaged_by, "reason": reason}
+                )
 
     def clear(self, cleared_by: str, notes: Optional[str] = None) -> None:
         """
-        Deliberately requires an explicit `cleared_by` — there's no
+        Deliberately requires an explicit `cleared_by` -- there's no
         "auto-clear after N minutes" path anywhere in this class. An
         emergency stop that quietly resumes on its own is arguably
         worse than not having one: it gives the *appearance* of a
@@ -75,21 +81,21 @@ class KillSwitch:
             self._engaged_at = None
             self._reason = None
 
-        if self._audit_log:
-            self._audit_log.append(
-                "kill_switch_cleared",
-                {
-                    "cleared_by": cleared_by,
-                    "notes": notes,
-                    "was_engaged": was_engaged,
-                    "original_engaged_by": engaged_by,
-                    "original_reason": reason,
-                },
-            )
+            if self._audit_log:
+                self._audit_log.append(
+                    "kill_switch_cleared",
+                    {
+                        "cleared_by": cleared_by,
+                        "notes": notes,
+                        "was_engaged": was_engaged,
+                        "original_engaged_by": engaged_by,
+                        "original_reason": reason,
+                    },
+                )
 
     def check(self) -> None:
         """Raises KillSwitchEngagedError if engaged; returns normally
-        otherwise. Call this at the start of any governed action —
+        otherwise. Call this at the start of any governed action --
         e.g. PolicyEngine.evaluate or ToolPermissionRegistry.check_and_record
         would each call this first in a fully wired-up setup, so that
         engaging the kill switch actually stops new actions rather than
