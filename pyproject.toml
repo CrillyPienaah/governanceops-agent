@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "governanceops-agent"
-version = "0.1.0"
+version = "0.2.0"
 description = "Runtime governance controls for agentic AI systems — autonomy tiering, policy/confidence gating, HITL checkpoints, scoped tool permissions, a tamper-evident audit log, and a kill switch."
 readme = "README.md"
 requires-python = ">=3.10"
