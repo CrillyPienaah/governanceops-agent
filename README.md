@@ -196,6 +196,29 @@ comments — run it directly:
 python examples/invoice_agent_example.py
 ```
 
+## Ghana Phase I synthetic lending demonstration
+
+`examples/ghana_synthetic_lending_demo.py` runs the five scenarios from
+the Synthetic Lending Demo Scenario Definitions document against the
+real `governanceops_agent.ghana` controls (credit-report gate, Act 1052
+§57 disclosure gate) and the real `AuditLog` — clean pass, credit-report
+block, incomplete-disclosure block, both-gates-fail block, and two
+applicants evaluated back-to-back with no cross-contamination between
+them. Every decision, audit entry, and `AuditLog.verify()` result
+printed is produced by actually calling those functions, not
+hand-written. All applicant data is synthetic and fictional; no real
+borrower information is used. This does not implement Candidate 3 (Act
+843 §41) and does not certify Ghanaian legal compliance, Bank of Ghana
+approval, or institutional validation. Run it directly (no network or
+database required):
+
+```bash
+python examples/ghana_synthetic_lending_demo.py
+```
+
+Automated coverage for the scenario logic itself lives in
+`tests/test_ghana_synthetic_lending_demo.py`.
+
 ## Quickstart
 
 ```python
@@ -367,14 +390,18 @@ python examples/live_inventory_roundtrip_demo.py \
 pytest -v
 ```
 
-91 test cases across 12 files, covering all six primitives, the
+124 test cases across 14 files, covering all six primitives, the
 `AgentGovernor` integration, the JSONL persistence adapter, the AI
 Deployment Gate (including real subprocess invocations of the actual
 installed CLI, not just in-process function calls), the crosswalk
-mapping, and the bidirectional GovernanceOps Inventory integration
+mapping, the bidirectional GovernanceOps Inventory integration
 (`test_inventory_client.py` — policy-bundle consumption, policy
 versioning capture, and the evidence-return path via a monkeypatched
-`report_runtime_event`). Every one of these was verified by hand in the
+`report_runtime_event`), the Ghana Phase I lending gates
+(`test_ghana_lending_controls.py` — credit-report gate, §57 disclosure
+gate, cross-applicant isolation), and the synthetic lending
+demonstration built on top of them (`test_ghana_synthetic_lending_demo.py`).
+Every one of these was verified by hand in the
 sandbox this library was built in — this is a **zero-runtime-dependency,
 pure-stdlib** library, so unlike Tool 1 (which needed careful
 module-stubbing to work around missing `pydantic`/`fastapi`/etc.),
