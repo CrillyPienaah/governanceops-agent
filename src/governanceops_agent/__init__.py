@@ -45,7 +45,7 @@ from governanceops_agent.governor import ActionOutcome, AgentGovernor
 from governanceops_agent.hitl import Checkpoint, CheckpointError, CheckpointStatus, CheckpointStore
 from governanceops_agent.inventory_client import InventoryClientError, build_governance_from_bundle, fetch_policy_bundle, report_runtime_event, CompiledPolicy
 from governanceops_agent.kill_switch import KillSwitch, KillSwitchEngagedError, KillSwitchState
-from governanceops_agent.permissions import PermissionDeniedError, ToolPermissionRegistry, ToolScope
+from governanceops_agent.permissions import CumulativeLimit, PermissionDeniedError, ToolPermissionRegistry, ToolScope
 from governanceops_agent.policy import (
     Decision,
     PolicyDecisionResult,
@@ -75,6 +75,7 @@ __all__ = [
     "KillSwitch",
     "KillSwitchEngagedError",
     "KillSwitchState",
+    "CumulativeLimit",
     "PermissionDeniedError",
     "ToolPermissionRegistry",
     "ToolScope",

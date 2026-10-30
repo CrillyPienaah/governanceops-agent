@@ -49,18 +49,61 @@ class ToolScope:
     max_calls_per_session: Optional[int] = None
     constraint: Optional[Callable[[dict[str, Any]], bool]] = None
     constraint_description: Optional[str] = None
+    # Calls whose amount is above this need an approved, unused HITL
+    # checkpoint bound to that exact call -- see AgentGovernor.evaluate_action.
+    approval_above: Optional[float] = None
+
+
+@dataclass(frozen=True)
+class CumulativeLimit:
+    """
+    A ceiling on the summed amount of ALL listed tools in one session,
+    not each tool separately. Per-tool caps alone let an agent spend
+    the same budget twice by splitting it across two tools (e.g. a
+    refund plus a credit adjustment to the same customer).
+    """
+
+    limit_id: str
+    tool_names: tuple[str, ...]
+    ceiling: float
+
+
+_AMOUNT_PARAM_CANDIDATES = ("amount", "value", "total")
+
+
+def _amount_from(params: dict[str, Any]) -> Optional[Any]:
+    for key in _AMOUNT_PARAM_CANDIDATES:
+        if key in params:
+            return params[key]
+    return None
 
 
 class ToolPermissionRegistry:
     def __init__(self, audit_log: Optional[AuditLog] = None):
         self._scopes: dict[str, ToolScope] = {}
         self._call_counts: dict[str, int] = {}
+        self._cumulative_limits: dict[str, CumulativeLimit] = {}
+        self._cumulative_used: dict[str, Any] = {}
         self._audit_log = audit_log
         self._lock = threading.Lock()
 
     def register(self, scope: ToolScope) -> None:
         with self._lock:
             self._scopes[scope.tool_name] = scope
+
+    def register_cumulative_limit(self, limit: CumulativeLimit) -> None:
+        with self._lock:
+            self._cumulative_limits[limit.limit_id] = limit
+
+    def requires_approval(self, tool_name: str, params: Optional[dict[str, Any]] = None) -> bool:
+        """True if this call is above its tool's approval_above threshold.
+        A call with no amount param fails closed: approval is required."""
+        with self._lock:
+            scope = self._scopes.get(tool_name)
+        if scope is None or scope.approval_above is None:
+            return False
+        amount = _amount_from(params or {})
+        return amount is None or amount > scope.approval_above
 
     def _deny(self, tool_name: str, reason: str) -> None:
         if self._audit_log:
@@ -118,6 +161,26 @@ class ToolPermissionRegistry:
                         f"{scope.max_calls_per_session}.",
                     )
 
+            applicable = [lim for lim in self._cumulative_limits.values() if tool_name in lim.tool_names]
+            if applicable:
+                amount = _amount_from(params)
+                if amount is None:
+                    self._deny(
+                        tool_name,
+                        f"'{tool_name}' is under a cumulative limit but the call has no "
+                        "'amount'/'value'/'total' param -- refusing rather than counting it as 0.",
+                    )
+                for lim in applicable:
+                    used = self._cumulative_used.get(lim.limit_id, 0)
+                    if used + amount > lim.ceiling:
+                        self._deny(
+                            tool_name,
+                            f"'{tool_name}' call of {amount} would bring cumulative limit "
+                            f"{lim.limit_id} to {used + amount}, over its ceiling of {lim.ceiling}.",
+                        )
+                for lim in applicable:
+                    self._cumulative_used[lim.limit_id] = self._cumulative_used.get(lim.limit_id, 0) + amount
+
             self._call_counts[tool_name] = self._call_counts.get(tool_name, 0) + 1
 
         if self._audit_log:
@@ -132,3 +195,4 @@ class ToolPermissionRegistry:
         cumulatively forever across the registry's whole lifetime."""
         with self._lock:
             self._call_counts.clear()
+            self._cumulative_used.clear()

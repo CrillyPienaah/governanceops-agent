@@ -16,11 +16,11 @@ layer, not the only way to use the library.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any, Optional
+from typing import Any, Callable, Optional
 
 from governanceops_agent.audit_log import AuditEntry, AuditLog
 from governanceops_agent.autonomy import AutonomyLevel
-from governanceops_agent.hitl import Checkpoint, CheckpointStore
+from governanceops_agent.hitl import Checkpoint, CheckpointError, CheckpointStore
 from governanceops_agent.inventory_client import (
     InventoryClientError,
     build_governance_from_bundle,
@@ -69,6 +69,7 @@ class AgentGovernor:
         secret_key: Optional[str] = None,
         policy_engine: Optional[PolicyEngine] = None,
         audit_log: Optional[AuditLog] = None,
+        authority_check: Optional[Callable[[], bool]] = None,
     ):
         """
         Either pass `secret_key` (the common case -- constructs a fresh
@@ -91,6 +92,13 @@ class AgentGovernor:
         self.checkpoints = CheckpointStore(audit_log=self.audit_log)
         self.permissions = ToolPermissionRegistry(audit_log=self.audit_log)
         self.policy_engine = policy_engine or PolicyEngine()
+
+        # Asked before every action whether the approved authority is
+        # still current (not revoked or expired). Without it a governor
+        # acts on the policy it was built with forever: nothing ever
+        # refreshes a governor after construction, so a revocation at
+        # the source of truth never reached a running agent.
+        self._authority_check = authority_check
 
         # Only meaningful for a governor built via from_governanceops()
         # -- None here means either "not built that way" or "built
@@ -288,6 +296,25 @@ class AgentGovernor:
             token or self._inventory_token,
         )
 
+    def request_approval(
+        self,
+        action: str,
+        tool_name: str,
+        tool_params: Optional[dict[str, Any]] = None,
+        checkpoint_ttl_seconds: Optional[float] = None,
+    ) -> Optional[Checkpoint]:
+        """Creates a HITL checkpoint bound to this exact tool call if the
+        call is above its approval threshold, else returns None. Records
+        nothing against the tool's call count or cumulative limits."""
+        if not self.permissions.requires_approval(tool_name, tool_params):
+            return None
+        return self.checkpoints.create(
+            action=action,
+            reason=f"'{tool_name}' call is above its approval threshold -- human approval required.",
+            ttl_seconds=checkpoint_ttl_seconds,
+            bound_params={"tool_name": tool_name, "params": dict(tool_params or {})},
+        )
+
     def evaluate_action(
         self,
         action: str,
@@ -296,6 +323,7 @@ class AgentGovernor:
         tool_name: Optional[str] = None,
         tool_params: Optional[dict[str, Any]] = None,
         checkpoint_ttl_seconds: Optional[float] = None,
+        approval_checkpoint_id: Optional[str] = None,
     ) -> ActionOutcome:
         """
         The one call most integrations need. Order of checks, and why
@@ -327,6 +355,30 @@ class AgentGovernor:
            evaluation has no way to know about.
         """
         self.kill_switch.check()  # raises KillSwitchEngagedError if engaged
+
+        if self._authority_check is not None:
+            try:
+                authority_current = bool(self._authority_check())
+            except Exception:
+                authority_current = False  # can't confirm authority -> don't act
+            if not authority_current:
+                reason = (
+                    "Approved authority is no longer current (revoked, expired, or unreadable) "
+                    "-- refusing to act on the policy this governor was built with."
+                )
+                self.audit_log.append("authority_not_current", {"action": action, "reason": reason})
+                return ActionOutcome(
+                    allowed=False,
+                    policy_decision=PolicyDecisionResult(
+                        decision=Decision.BLOCK,
+                        matched_rule="authority_check",
+                        reason=reason,
+                        action=action,
+                        confidence=confidence,
+                        autonomy_level=autonomy_level,
+                    ),
+                    denial_reason=reason,
+                )
 
         effective_autonomy_level = autonomy_level
         if (
@@ -366,6 +418,20 @@ class AgentGovernor:
 
         # decision.decision == Decision.ALLOW
         if tool_name is not None:
+            if self.permissions.requires_approval(tool_name, tool_params):
+                if approval_checkpoint_id is None:
+                    checkpoint = self.request_approval(action, tool_name, tool_params, checkpoint_ttl_seconds)
+                    return ActionOutcome(allowed=False, policy_decision=decision, checkpoint=checkpoint)
+                # Spent before the permission check, so a call that is then
+                # denied can't keep its approval for a retry -- fails closed.
+                try:
+                    self.checkpoints.consume(
+                        approval_checkpoint_id,
+                        action,
+                        {"tool_name": tool_name, "params": dict(tool_params or {})},
+                    )
+                except CheckpointError as exc:
+                    return ActionOutcome(allowed=False, policy_decision=decision, denial_reason=str(exc))
             try:
                 self.permissions.check_and_record(tool_name, effective_autonomy_level, tool_params)
             except PermissionDeniedError as exc:

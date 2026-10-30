@@ -46,6 +46,9 @@ class Checkpoint:
     resolved_at: Optional[datetime] = None
     resolution_notes: Optional[str] = None
     expires_at: Optional[datetime] = None
+    # The exact call this checkpoint approves, and whether it has been spent.
+    bound_params: Optional[dict] = None
+    consumed: bool = False
 
     @property
     def is_resolved(self) -> bool:
@@ -89,7 +92,11 @@ class CheckpointStore:
         self._lock = threading.Lock()
 
     def create(
-        self, action: str, reason: str, ttl_seconds: Optional[float] = None
+        self,
+        action: str,
+        reason: str,
+        ttl_seconds: Optional[float] = None,
+        bound_params: Optional[dict] = None,
     ) -> Checkpoint:
         checkpoint_id = str(uuid.uuid4())
         now = datetime.now(timezone.utc)
@@ -101,6 +108,7 @@ class CheckpointStore:
             reason=reason,
             created_at=now,
             expires_at=expires_at,
+            bound_params=bound_params,
         )
 
         with self._lock:
@@ -161,6 +169,37 @@ class CheckpointStore:
 
     def reject(self, checkpoint_id: str, approver: str, notes: Optional[str] = None) -> Checkpoint:
         return self._resolve(checkpoint_id, CheckpointStatus.REJECTED, approver, notes)
+
+    def consume(self, checkpoint_id: str, action: str, bound_params: dict) -> Checkpoint:
+        """
+        Spends an APPROVED checkpoint on exactly the call it was approved
+        for. Single use: a second consume of the same checkpoint raises,
+        as does any call whose action or params differ from what the
+        human approved -- an approval for one refund is not an approval
+        for a different payee or amount.
+        """
+        with self._lock:
+            if checkpoint_id not in self._checkpoints:
+                raise CheckpointError(f"No checkpoint found with id {checkpoint_id!r}.")
+            checkpoint = self._checkpoints[checkpoint_id]
+            if checkpoint.status != CheckpointStatus.APPROVED:
+                raise CheckpointError(
+                    f"Checkpoint {checkpoint_id!r} is {checkpoint.status.value!r}, not approved."
+                )
+            if checkpoint.consumed:
+                raise CheckpointError(f"Checkpoint {checkpoint_id!r} was already used -- approvals are single-use.")
+            if checkpoint.action != action or checkpoint.bound_params != bound_params:
+                raise CheckpointError(
+                    f"Checkpoint {checkpoint_id!r} approved a different call -- it is bound to the "
+                    "exact action and params a human approved."
+                )
+            checkpoint.consumed = True
+
+        if self._audit_log:
+            self._audit_log.append(
+                "hitl_checkpoint_consumed", {"checkpoint_id": checkpoint_id, "action": action}
+            )
+        return checkpoint
 
     def is_expired(self, checkpoint: Checkpoint) -> bool:
         if checkpoint.expires_at is None:
